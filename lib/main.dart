@@ -4,6 +4,7 @@ import 'pages/home_page.dart';
 import 'state/app_state.dart';
 import 'pages/setting.dart';
 import 'state/theme_state.dart';
+import 'state/prefs_state.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +21,12 @@ class _MyAppState extends ConsumerState<MyApp> {
   @override
   void initState() {
     super.initState();
-    // 应用启动后启动数据源（默认 Mock）
+    Future.microtask(() async {
+      await ref.read(appThemeProvider.notifier).load();
+      await ref.read(prefsProvider.notifier).load();
+      await ref.read(ingestProvider).start();
+    });
+
     Future.microtask(() async {
       await ref.read(ingestProvider).start();
     });

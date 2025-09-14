@@ -1,28 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/theme_state.dart';
+import '../state/prefs_state.dart';
 
-class SettingPage extends ConsumerStatefulWidget {
+class SettingPage extends ConsumerWidget {
   const SettingPage({super.key});
 
   @override
-  ConsumerState<SettingPage> createState() => _SettingPageState();
-}
-
-class _SettingPageState extends ConsumerState<SettingPage> {
-  bool _compactCards = true;
-  bool _enableSampling = true;
-  String _renderer = 'FastLine';
-  double _lineWidth = 1.5;
-  bool _autoIngest = true;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
 
     final themeState = ref.watch(appThemeProvider);
     final isDark = themeState.mode == ThemeMode.dark;
     final accentName = ThemePalette.nameOf(themeState.seed);
+
+    final prefs = ref.watch(prefsProvider);
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
@@ -37,9 +29,9 @@ class _SettingPageState extends ConsumerState<SettingPage> {
                   title: const Text('深色模式'),
                   subtitle: const Text('切换应用主题：深色 / 浅色'),
                   value: isDark,
-                  onChanged: (v) =>
-                      ref.read(appThemeProvider.notifier)
-                          .setMode(v ? ThemeMode.dark : ThemeMode.light),
+                  onChanged: (v) => ref
+                      .read(appThemeProvider.notifier)
+                      .setMode(v ? ThemeMode.dark : ThemeMode.light),
                 ),
                 ListTile(
                   title: const Text('主题色'),
@@ -59,6 +51,13 @@ class _SettingPageState extends ConsumerState<SettingPage> {
                     },
                   ),
                 ),
+                SwitchListTile(
+                  title: const Text('紧凑卡片'),
+                  subtitle: const Text('减少内边距，适合高密度信息'),
+                  value: prefs.compactCards,
+                  onChanged: (v) =>
+                      ref.read(prefsProvider.notifier).setCompactCards(v),
+                ),
               ],
             ),
 
@@ -68,33 +67,39 @@ class _SettingPageState extends ConsumerState<SettingPage> {
                 SwitchListTile(
                   title: const Text('启用数据降采样'),
                   subtitle: const Text('按视窗像素宽度抽样，提升大数据量渲染性能'),
-                  value: _enableSampling,
-                  onChanged: (v) => setState(() => _enableSampling = v),
+                  value: prefs.enableSampling,
+                  onChanged: (v) =>
+                      ref.read(prefsProvider.notifier).setEnableSampling(v),
                 ),
                 ListTile(
                   title: const Text('渲染器'),
-                  subtitle: Text(_renderer),
+                  subtitle: Text(prefs.renderer),
                   trailing: DropdownButton<String>(
-                    value: _renderer,
+                    value: prefs.renderer,
                     items: const [
                       DropdownMenuItem(value: 'FastLine', child: Text('FastLine')),
                       DropdownMenuItem(value: 'Line', child: Text('Line')),
                       DropdownMenuItem(value: 'WebGL', child: Text('WebGL（嵌入）')),
                     ],
-                    onChanged: (v) => setState(() => _renderer = v ?? _renderer),
+                    onChanged: (v) {
+                      if (v != null) {
+                        ref.read(prefsProvider.notifier).setRenderer(v);
+                      }
+                    },
                   ),
                 ),
                 ListTile(
                   title: const Text('线宽'),
-                  subtitle: Text('${_lineWidth.toStringAsFixed(1)} px'),
+                  subtitle: Text('${prefs.lineWidth.toStringAsFixed(1)} px'),
                 ),
                 Slider(
                   min: 0.5,
                   max: 4,
                   divisions: 7,
-                  value: _lineWidth,
-                  label: _lineWidth.toStringAsFixed(1),
-                  onChanged: (v) => setState(() => _lineWidth = v),
+                  value: prefs.lineWidth,
+                  label: prefs.lineWidth.toStringAsFixed(1),
+                  onChanged: (v) =>
+                      ref.read(prefsProvider.notifier).setLineWidth(v),
                 ),
               ],
             ),
@@ -104,8 +109,9 @@ class _SettingPageState extends ConsumerState<SettingPage> {
               children: [
                 SwitchListTile(
                   title: const Text('启动时自动连接数据源'),
-                  value: _autoIngest,
-                  onChanged: (v) => setState(() => _autoIngest = v),
+                  value: prefs.autoIngest,
+                  onChanged: (v) =>
+                      ref.read(prefsProvider.notifier).setAutoIngest(v),
                 ),
                 ListTile(
                   title: const Text('清理缓存/临时数据'),
