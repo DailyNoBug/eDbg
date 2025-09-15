@@ -5,6 +5,7 @@ import 'state/app_state.dart';
 import 'pages/setting.dart';
 import 'state/theme_state.dart';
 import 'state/prefs_state.dart';
+import 'pages/ssh_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,9 +64,9 @@ class PageSpec {
 }
 
 final List<PageSpec> pages = [
-  PageSpec(title: 'home', icon: Icons.home_outlined, builder: (_) => const HomePage()),
-  PageSpec(title: 'data', icon: Icons.dashboard_customize_outlined, builder: (_) => const _EmptyPage('data')),
-  PageSpec(title: 'setting', icon: Icons.settings_input_component_outlined, builder: (_) => const SettingPage()),
+  PageSpec(title: 'data', icon: Icons.data_array, builder: (_) => const HomePage()),
+  PageSpec(title: 'ssh', icon: Icons.terminal, builder: (_) => const SshPage()),
+  PageSpec(title: 'setting', icon: Icons.settings, builder: (_) => const SettingPage()),
 ];
 
 class HomeShell extends StatefulWidget {
@@ -78,8 +79,8 @@ class _HomeShellState extends State<HomeShell> {
   int _index = 0;
   bool _expanded = true;
 
-  static const double _expandedHeight = 120; // 含标题栏与菜单
-  static const double _collapsedHeight = 88; // 紧凑，仅图标
+  static const double _expandedHeight = 74; // 含标题栏与菜单
+  static const double _collapsedHeight = 50; // 紧凑，仅图标
 
   @override
   Widget build(BuildContext context) {
@@ -100,27 +101,8 @@ class _HomeShellState extends State<HomeShell> {
             ),
             child: SafeArea(
               bottom: false,
-              child: Column(
+              child: Row(
                 children: [
-                  // 标题 + 折叠按钮
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.task_alt, size: 20),
-                        const SizedBox(width: 8),
-                        const Text('eDbg',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                        const Spacer(),
-                        IconButton(
-                          tooltip: _expanded ? '收起菜单' : '展开菜单',
-                          onPressed: () => setState(() => _expanded = !_expanded),
-                          icon: Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 菜单条（横向滚动）
                   Expanded(
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
@@ -138,6 +120,11 @@ class _HomeShellState extends State<HomeShell> {
                         );
                       },
                     ),
+                  ),
+                  IconButton(
+                    tooltip: _expanded ? '收起菜单' : '展开菜单',
+                    onPressed: () => setState(() => _expanded = !_expanded),
+                    icon: Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
                   ),
                 ],
               ),
