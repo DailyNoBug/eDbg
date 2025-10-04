@@ -18,6 +18,9 @@ class DataPage extends ConsumerStatefulWidget {
 class _DataPageState extends ConsumerState<DataPage> {
   late List<_ChartGroup> _groups;
   int _chartCounter = 1;
+  final Set<String> _pausedCharts = <String>{};
+  final Map<String, Map<VariablePath, List<_ChartPoint>>> _pausedSnapshots =
+      <String, Map<VariablePath, List<_ChartPoint>>>{};
 
   @override
   void initState() {
@@ -34,10 +37,13 @@ class _DataPageState extends ConsumerState<DataPage> {
   }
 
   void _applySelection(Set<VariablePath> selection) {
+    final store = ref.read(storeProvider);
     if (selection.isEmpty) {
       _groups
         ..clear()
         ..add(_ChartGroup(id: _nextGroupId()));
+      _pausedCharts.clear();
+      _pausedSnapshots.clear();
       return;
     }
 
@@ -65,6 +71,16 @@ class _DataPageState extends ConsumerState<DataPage> {
         if (_groups[i].variables.isEmpty && i != 0) {
           _groups.removeAt(i);
         }
+      }
+    }
+
+    final existingIds = _groups.map((g) => g.id).toSet();
+    _pausedCharts.removeWhere((id) => !existingIds.contains(id));
+    _pausedSnapshots.removeWhere((id, _) => !existingIds.contains(id));
+
+    for (final group in _groups) {
+      if (_pausedCharts.contains(group.id)) {
+        _pausedSnapshots[group.id] = _collectSeriesData(group.variables, store);
       }
     }
   }
@@ -232,7 +248,16 @@ class _DataPageState extends ConsumerState<DataPage> {
     required Map<VariablePath, RingSeries> store,
     required AppPrefsState prefs,
   }) {
-    final series = _seriesForVariables(group.variables, store, prefs);
+    final isPaused = _pausedCharts.contains(group.id);
+    Map<VariablePath, List<_ChartPoint>> data;
+    if (isPaused) {
+      data = _pausedSnapshots[group.id] ??=
+          _collectSeriesData(group.variables, store);
+    } else {
+      data = _collectSeriesData(group.variables, store);
+      _pausedSnapshots.remove(group.id);
+    }
+    final series = _seriesFromData(data, prefs);
 
     return DragTarget<VariablePath>(
       onWillAcceptWithDetails: (details) => true,
@@ -271,6 +296,15 @@ class _DataPageState extends ConsumerState<DataPage> {
                                 .bodyMedium
                                 ?.copyWith(color: cs.onSurfaceVariant)),
                       const Spacer(),
+                      Tooltip(
+                        message: isPaused ? '恢复更新' : '暂停更新',
+                        child: IconButton(
+                          icon: Icon(
+                            isPaused ? Icons.play_arrow : Icons.pause,
+                          ),
+                          onPressed: () => _toggleChartPaused(group.id),
+                        ),
+                      ),
                       if (group.variables.isEmpty && _groups.length > 1)
                         Tooltip(
                           message: '删除空图表',
@@ -297,6 +331,7 @@ class _DataPageState extends ConsumerState<DataPage> {
                       series: series,
                       hasData: series.isNotEmpty,
                       chartId: group.id,
+                      paused: isPaused,
                     ),
                   ),
                 ],
@@ -381,6 +416,7 @@ class _DataPageState extends ConsumerState<DataPage> {
     required List<CartesianSeries<_ChartPoint, DateTime>> series,
     required bool hasData,
     required String chartId,
+    required bool paused,
   }) {
     if (!hasData) {
       return Center(
@@ -402,34 +438,65 @@ class _DataPageState extends ConsumerState<DataPage> {
       );
     }
 
-    return SfCartesianChart(
-      key: ValueKey(chartId),
-      legend: const Legend(
-        isVisible: true,
-        overflowMode: LegendItemOverflowMode.wrap,
-      ),
-      tooltipBehavior: TooltipBehavior(
-        enable: true,
-        activationMode: ActivationMode.singleTap,
-        header: '',
-        decimalPlaces: 3,
-      ),
-      zoomPanBehavior: ZoomPanBehavior(
-        enablePinching: true,
-        enablePanning: true,
-        zoomMode: ZoomMode.x,
-      ),
-      plotAreaBorderWidth: 0,
-      primaryXAxis: DateTimeAxis(
-        intervalType: DateTimeIntervalType.auto,
-        dateFormat: DateFormat.Hms(),
-        majorGridLines: const MajorGridLines(width: 0.5),
-      ),
-      primaryYAxis: const NumericAxis(
-        majorGridLines: MajorGridLines(width: 0.5),
-        axisLine: AxisLine(width: 0),
-      ),
-      series: series,
+    return Stack(
+      children: [
+        SfCartesianChart(
+          key: ValueKey(chartId),
+          legend: const Legend(
+            isVisible: true,
+            overflowMode: LegendItemOverflowMode.wrap,
+          ),
+          tooltipBehavior: TooltipBehavior(
+            enable: true,
+            activationMode: ActivationMode.singleTap,
+            header: '',
+            decimalPlaces: 3,
+          ),
+          zoomPanBehavior: ZoomPanBehavior(
+            enablePinching: true,
+            enablePanning: true,
+            enableDoubleTapZooming: true,
+            enableMouseWheelZooming: true,
+            enableSelectionZooming: true,
+            zoomMode: ZoomMode.x,
+          ),
+          plotAreaBorderWidth: 0,
+          primaryXAxis: DateTimeAxis(
+            intervalType: DateTimeIntervalType.auto,
+            dateFormat: DateFormat.Hms(),
+            majorGridLines: const MajorGridLines(width: 0.5),
+          ),
+          primaryYAxis: const NumericAxis(
+            majorGridLines: MajorGridLines(width: 0.5),
+            axisLine: AxisLine(width: 0),
+          ),
+          series: series,
+        ),
+        if (paused)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: cs.surface.withOpacity(0.35),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.pause_circle, color: cs.primary, size: 40),
+                    const SizedBox(height: 8),
+                    Text('图表已暂停',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium
+                            ?.copyWith(color: cs.onSurface)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -458,7 +525,9 @@ class _DataPageState extends ConsumerState<DataPage> {
   void _removeChart(int index) {
     if (_groups.length <= 1) return;
     if (index < 0 || index >= _groups.length) return;
-    _groups.removeAt(index);
+    final removed = _groups.removeAt(index);
+    _pausedCharts.remove(removed.id);
+    _pausedSnapshots.remove(removed.id);
   }
 
   void _assignVariableToGroup(VariablePath vp, int targetIndex) {
@@ -468,6 +537,10 @@ class _DataPageState extends ConsumerState<DataPage> {
 
     for (final group in _groups) {
       group.variables.remove(vp);
+      if (group.variables.isEmpty) {
+        _pausedSnapshots.remove(group.id);
+        _pausedCharts.remove(group.id);
+      }
     }
 
     final int clampedIndex;
@@ -482,38 +555,78 @@ class _DataPageState extends ConsumerState<DataPage> {
     if (!group.variables.contains(vp)) {
       group.variables.add(vp);
     }
+    if (_pausedCharts.contains(group.id)) {
+      final store = ref.read(storeProvider);
+      _pausedSnapshots[group.id] = _collectSeriesData(group.variables, store);
+    }
   }
 
   void _moveVariableToNewChart(VariablePath vp) {
     for (final group in _groups) {
       group.variables.remove(vp);
+      if (group.variables.isEmpty) {
+        _pausedSnapshots.remove(group.id);
+        _pausedCharts.remove(group.id);
+      }
     }
     _groups.add(_ChartGroup(id: _nextGroupId(), variables: [vp]));
   }
 
-  List<CartesianSeries<_ChartPoint, DateTime>> _seriesForVariables(
+  void _toggleChartPaused(String id) {
+    setState(() {
+      if (_pausedCharts.remove(id)) {
+        _pausedSnapshots.remove(id);
+      } else {
+        _ChartGroup? target;
+        for (final g in _groups) {
+          if (g.id == id) {
+            target = g;
+            break;
+          }
+        }
+        final group = target;
+        if (group == null) {
+          return;
+        }
+        final store = ref.read(storeProvider);
+        _pausedCharts.add(id);
+        _pausedSnapshots[id] = _collectSeriesData(group.variables, store);
+      }
+    });
+  }
+
+  Map<VariablePath, List<_ChartPoint>> _collectSeriesData(
     List<VariablePath> variables,
     Map<VariablePath, RingSeries> store,
-    AppPrefsState prefs,
   ) {
-    final renderer = prefs.renderer;
-    final lineWidth = prefs.lineWidth;
-    final result = <CartesianSeries<_ChartPoint, DateTime>>[];
-
+    final result = <VariablePath, List<_ChartPoint>>{};
     for (final vp in variables) {
       final ring = store[vp];
       if (ring == null || ring.isEmpty) continue;
-      final data = [
+      result[vp] = [
         for (final pt in ring.points)
           _ChartPoint(
             DateTime.fromMillisecondsSinceEpoch(pt.xMs.round()),
             pt.y,
           ),
       ];
-      if (data.isEmpty) continue;
-      result.add(_seriesFor(renderer, data, vp.id, lineWidth));
     }
+    return result;
+  }
 
+  List<CartesianSeries<_ChartPoint, DateTime>> _seriesFromData(
+    Map<VariablePath, List<_ChartPoint>> data,
+    AppPrefsState prefs,
+  ) {
+    final renderer = prefs.renderer;
+    final lineWidth = prefs.lineWidth;
+    final entries = data.entries.toList()
+      ..sort((a, b) => a.key.id.compareTo(b.key.id));
+    final result = <CartesianSeries<_ChartPoint, DateTime>>[];
+    for (final entry in entries) {
+      if (entry.value.isEmpty) continue;
+      result.add(_seriesFor(renderer, entry.value, entry.key.id, lineWidth));
+    }
     return result;
   }
 
