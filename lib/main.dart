@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'pages/home_page.dart';
 import 'state/app_state.dart';
 import 'pages/setting.dart';
 import 'state/theme_state.dart';
 import 'state/prefs_state.dart';
 import 'pages/ssh_page.dart';
+import 'pages/map.dart';
+import 'pages/data_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,11 +26,6 @@ class _MyAppState extends ConsumerState<MyApp> {
     Future.microtask(() async {
       await ref.read(appThemeProvider.notifier).load();
       await ref.read(prefsProvider.notifier).load();
-      await ref.read(ingestProvider).start();
-    });
-
-    Future.microtask(() async {
-      await ref.read(ingestProvider).start();
     });
   }
 
@@ -60,13 +56,19 @@ class PageSpec {
   final String title;
   final IconData icon;
   final WidgetBuilder builder;
-  const PageSpec({required this.title, required this.icon, required this.builder});
+  const PageSpec(
+      {required this.title, required this.icon, required this.builder});
 }
 
 final List<PageSpec> pages = [
-  PageSpec(title: 'data', icon: Icons.data_array, builder: (_) => const HomePage()),
   PageSpec(title: 'ssh', icon: Icons.terminal, builder: (_) => const SshPage()),
-  PageSpec(title: 'setting', icon: Icons.settings, builder: (_) => const SettingPage()),
+  PageSpec(
+      title: 'data', icon: Icons.analytics, builder: (_) => const DataPage()),
+  PageSpec(title: 'map', icon: Icons.map, builder: (_) => const MapPage()),
+  PageSpec(
+      title: 'setting',
+      icon: Icons.settings,
+      builder: (_) => const SettingPage()),
 ];
 
 class HomeShell extends StatefulWidget {
@@ -124,13 +126,14 @@ class _HomeShellState extends State<HomeShell> {
                   IconButton(
                     tooltip: _expanded ? '收起菜单' : '展开菜单',
                     onPressed: () => setState(() => _expanded = !_expanded),
-                    icon: Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
+                    icon: Icon(_expanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down),
                   ),
                 ],
               ),
             ),
           ),
-
           Expanded(
             child: SafeArea(
               top: false,
@@ -221,7 +224,9 @@ class _EmptyPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               const Text('这是一个占位页面，你可以在这里替换为你的实际功能页面。'),
             ],

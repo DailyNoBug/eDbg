@@ -1,11 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _kCompact      = 'prefs.compactCards';
-const _kSampling     = 'prefs.enableSampling';
-const _kRenderer     = 'prefs.renderer';     // FastLine | Line | WebGL
-const _kLineWidth    = 'prefs.lineWidth';    // double
-const _kAutoIngest   = 'prefs.autoIngest';
+const _kCompact = 'prefs.compactCards';
+const _kSampling = 'prefs.enableSampling';
+const _kRenderer = 'prefs.renderer'; // FastLine | Line | WebGL
+const _kLineWidth = 'prefs.lineWidth'; // double
+const _kAutoIngest = 'prefs.autoIngest';
+const _kIngestPort = 'prefs.ingestPort';
 
 class AppPrefsState {
   final bool compactCards;
@@ -13,6 +14,7 @@ class AppPrefsState {
   final String renderer;
   final double lineWidth;
   final bool autoIngest;
+  final int ingestPort;
 
   const AppPrefsState({
     required this.compactCards,
@@ -20,6 +22,7 @@ class AppPrefsState {
     required this.renderer,
     required this.lineWidth,
     required this.autoIngest,
+    required this.ingestPort,
   });
 
   AppPrefsState copyWith({
@@ -28,6 +31,7 @@ class AppPrefsState {
     String? renderer,
     double? lineWidth,
     bool? autoIngest,
+    int? ingestPort,
   }) {
     return AppPrefsState(
       compactCards: compactCards ?? this.compactCards,
@@ -35,6 +39,7 @@ class AppPrefsState {
       renderer: renderer ?? this.renderer,
       lineWidth: lineWidth ?? this.lineWidth,
       autoIngest: autoIngest ?? this.autoIngest,
+      ingestPort: ingestPort ?? this.ingestPort,
     );
   }
 
@@ -44,6 +49,7 @@ class AppPrefsState {
     renderer: 'FastLine',
     lineWidth: 1.5,
     autoIngest: true,
+    ingestPort: 54431,
   );
 }
 
@@ -54,10 +60,12 @@ class AppPrefsController extends StateNotifier<AppPrefsState> {
     final p = await SharedPreferences.getInstance();
     state = AppPrefsState(
       compactCards: p.getBool(_kCompact) ?? AppPrefsState.defaults.compactCards,
-      enableSampling: p.getBool(_kSampling) ?? AppPrefsState.defaults.enableSampling,
+      enableSampling:
+          p.getBool(_kSampling) ?? AppPrefsState.defaults.enableSampling,
       renderer: p.getString(_kRenderer) ?? AppPrefsState.defaults.renderer,
       lineWidth: p.getDouble(_kLineWidth) ?? AppPrefsState.defaults.lineWidth,
       autoIngest: p.getBool(_kAutoIngest) ?? AppPrefsState.defaults.autoIngest,
+      ingestPort: p.getInt(_kIngestPort) ?? AppPrefsState.defaults.ingestPort,
     );
   }
 
@@ -90,9 +98,13 @@ class AppPrefsController extends StateNotifier<AppPrefsState> {
     state = state.copyWith(autoIngest: v);
     _persist((p) => p.setBool(_kAutoIngest, v));
   }
+
+  void setIngestPort(int v) {
+    state = state.copyWith(ingestPort: v);
+    _persist((p) => p.setInt(_kIngestPort, v));
+  }
 }
 
-final prefsProvider =
-StateNotifierProvider<AppPrefsController, AppPrefsState>(
-      (ref) => AppPrefsController(),
+final prefsProvider = StateNotifierProvider<AppPrefsController, AppPrefsState>(
+  (ref) => AppPrefsController(),
 );

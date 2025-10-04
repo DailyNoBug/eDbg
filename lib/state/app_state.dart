@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models.dart';
-import '../core/data_source.dart';
 
 /// 全局配置
 class AppConfig {
@@ -76,32 +75,3 @@ final storeProvider = StateNotifierProvider<TimeSeriesStore, Map<VariablePath, R
   final cap = ref.watch(configProvider).capacityPerVar;
   return TimeSeriesStore(cap);
 });
-
-
-/// 数据订阅控制器
-class IngestController {
-  final Ref ref; DataSource? _ds; StreamSubscription? _sub;
-  IngestController(this.ref);
-
-
-  Future<void> start() async {
-    await stop();
-    final cfg = ref.read(configProvider);
-    switch (cfg.protocol) {
-      case 'udp': _ds = UdpDataSource(cfg.port)..start(); break;
-      case 'tcp': _ds = TcpDataSource(cfg.host, cfg.port)..start(); break;
-      default: _ds = MockDataSource()..start();
-    }
-    _sub = _ds!.stream.listen((p) {
-      ref.read(registryProvider.notifier).ingest(p);
-      if (!ref.read(pausedProvider)) {
-        ref.read(storeProvider.notifier).add(p);
-      }
-    }, onError: (e) {
-// TODO: 用 SnackBar 或 Banner 告知错误
-    });
-  }
-
-  Future<void> stop() async { await _sub?.cancel(); await _ds?.dispose(); }
-}
-final ingestProvider = Provider<IngestController>((ref) => IngestController(ref));

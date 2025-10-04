@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import '../state/theme_state.dart';
 import '../state/prefs_state.dart';
 
@@ -40,8 +41,8 @@ class SettingPage extends ConsumerWidget {
                     value: accentName,
                     items: const [
                       DropdownMenuItem(value: 'Indigo', child: Text('Indigo')),
-                      DropdownMenuItem(value: 'Blue',   child: Text('Blue')),
-                      DropdownMenuItem(value: 'Teal',   child: Text('Teal')),
+                      DropdownMenuItem(value: 'Blue', child: Text('Blue')),
+                      DropdownMenuItem(value: 'Teal', child: Text('Teal')),
                       DropdownMenuItem(value: 'Purple', child: Text('Purple')),
                     ],
                     onChanged: (v) {
@@ -60,7 +61,6 @@ class SettingPage extends ConsumerWidget {
                 ),
               ],
             ),
-
             _SectionCard(
               title: '图表与性能',
               children: [
@@ -77,9 +77,11 @@ class SettingPage extends ConsumerWidget {
                   trailing: DropdownButton<String>(
                     value: prefs.renderer,
                     items: const [
-                      DropdownMenuItem(value: 'FastLine', child: Text('FastLine')),
+                      DropdownMenuItem(
+                          value: 'FastLine', child: Text('FastLine')),
                       DropdownMenuItem(value: 'Line', child: Text('Line')),
-                      DropdownMenuItem(value: 'WebGL', child: Text('WebGL（嵌入）')),
+                      DropdownMenuItem(
+                          value: 'WebGL', child: Text('WebGL（嵌入）')),
                     ],
                     onChanged: (v) {
                       if (v != null) {
@@ -103,7 +105,6 @@ class SettingPage extends ConsumerWidget {
                 ),
               ],
             ),
-
             _SectionCard(
               title: '数据',
               children: [
@@ -112,6 +113,26 @@ class SettingPage extends ConsumerWidget {
                   value: prefs.autoIngest,
                   onChanged: (v) =>
                       ref.read(prefsProvider.notifier).setAutoIngest(v),
+                ),
+                TextFormField(
+                  key: ValueKey('ingestPort-${prefs.ingestPort}'),
+                  initialValue: prefs.ingestPort.toString(),
+                  decoration: const InputDecoration(
+                    labelText: '监听端口',
+                    helperText: '接收 JSON 数据流，默认 54431',
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  onFieldSubmitted: (value) {
+                    final parsed = int.tryParse(value);
+                    if (parsed == null || parsed <= 0 || parsed > 65535) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('端口无效，请输入 1-65535')),
+                      );
+                      return;
+                    }
+                    ref.read(prefsProvider.notifier).setIngestPort(parsed);
+                  },
                 ),
                 ListTile(
                   title: const Text('清理缓存/临时数据'),
@@ -126,7 +147,6 @@ class SettingPage extends ConsumerWidget {
                 ),
               ],
             ),
-
             _SectionCard(
               title: '关于',
               children: [
