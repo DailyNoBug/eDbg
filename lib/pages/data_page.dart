@@ -16,40 +16,94 @@ class DataPage extends ConsumerStatefulWidget {
 }
 
 class _DataPageState extends ConsumerState<DataPage> {
-  late final TooltipBehavior _tooltipBehavior;
-  late final ZoomPanBehavior _zoomPanBehavior;
+  late List<_ChartGroup> _groups;
+  int _chartCounter = 1;
 
   @override
   void initState() {
     super.initState();
-    _tooltipBehavior = TooltipBehavior(
-      enable: true,
-      activationMode: ActivationMode.singleTap,
-      header: '',
-      decimalPlaces: 3,
-    );
-    _zoomPanBehavior = ZoomPanBehavior(
-      enablePinching: true,
-      enablePanning: true,
-      zoomMode: ZoomMode.x,
-    );
+    _groups = [_ChartGroup(id: _nextGroupId())];
+    _applySelection(ref.read(selectedVarsProvider));
   }
+
+  void _syncSelection(Set<VariablePath> selection) {
+    if (!mounted) return;
+    setState(() {
+      _applySelection(selection);
+    });
+  }
+
+  void _applySelection(Set<VariablePath> selection) {
+    if (selection.isEmpty) {
+      _groups
+        ..clear()
+        ..add(_ChartGroup(id: _nextGroupId()));
+      return;
+    }
+
+    for (final group in _groups) {
+      group.variables.removeWhere((vp) => !selection.contains(vp));
+    }
+
+    final assigned = <VariablePath>{};
+    for (final group in _groups) {
+      assigned.addAll(group.variables);
+    }
+
+    if (_groups.isEmpty) {
+      _groups.add(_ChartGroup(id: _nextGroupId()));
+    }
+
+    for (final vp in selection) {
+      if (!assigned.contains(vp)) {
+        _groups.first.variables.add(vp);
+      }
+    }
+
+    if (_groups.length > 1) {
+      for (var i = _groups.length - 1; i >= 0; i--) {
+        if (_groups[i].variables.isEmpty && i != 0) {
+          _groups.removeAt(i);
+        }
+      }
+    }
+  }
+
+  String _nextGroupId() => 'chart-${_chartCounter++}';
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<Set<VariablePath>>(selectedVarsProvider, (previous, next) {
+      if (previous == next) return;
+      _syncSelection(next);
+    });
+
     final cs = Theme.of(context).colorScheme;
     final listener = ref.watch(telemetryListenerProvider);
     final registry = ref.watch(registryProvider);
     final store = ref.watch(storeProvider);
     final selected = ref.watch(selectedVarsProvider);
     final prefs = ref.watch(prefsProvider);
+    final paused = ref.watch(pausedProvider);
 
     final sortedTypes = registry.keys.toList()..sort();
-    final selectedList = selected.toList()
-      ..sort((a, b) => a.id.compareTo(b.id));
 
-    final chartSeries = _buildSeries(
-      selected: selectedList,
+    final sidebar = _Sidebar(
+      listener: listener,
+      registry: registry,
+      sortedTypes: sortedTypes,
+      selected: selected,
+      onToggle: _toggleSelection,
+      onClear: _clearSelection,
+      paused: paused,
+      onTogglePaused: () => _togglePaused(paused),
+    );
+
+    final chartArea = _buildChartArea(
+      context: context,
+      cs: cs,
+      listener: listener,
+      selected: selected,
       store: store,
       prefs: prefs,
     );
@@ -59,23 +113,6 @@ class _DataPageState extends ConsumerState<DataPage> {
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isVertical = constraints.maxWidth < 820;
-          final sidebar = _Sidebar(
-            listener: listener,
-            registry: registry,
-            sortedTypes: sortedTypes,
-            selected: selected,
-            onToggle: _toggleSelection,
-            onClear: _clearSelection,
-          );
-
-          final chartArea = _buildChartArea(
-            context: context,
-            cs: cs,
-            series: chartSeries,
-            listener: listener,
-            hasSelection: selectedList.isNotEmpty,
-          );
-
           if (isVertical) {
             return Column(
               children: [
@@ -101,14 +138,15 @@ class _DataPageState extends ConsumerState<DataPage> {
   Widget _buildChartArea({
     required BuildContext context,
     required ColorScheme cs,
-    required List<CartesianSeries<_ChartPoint, DateTime>> series,
     required TelemetryListenerState listener,
-    required bool hasSelection,
+    required Set<VariablePath> selected,
+    required Map<VariablePath, RingSeries> store,
+    required AppPrefsState prefs,
   }) {
-    if (!hasSelection) {
+    if (selected.isEmpty) {
       final subtitle = listener.packetCount > 0
-          ? '在左侧选择一个或多个数据项以绘图'
-          : '等待数据到达后，可在左侧选择数据项进行绘图';
+          ? '在左侧选择要监控的信号，可拖动拆分到不同图表'
+          : '等待数据到达后，可在左侧选择信号并拖动拆分图表';
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -133,23 +171,265 @@ class _DataPageState extends ConsumerState<DataPage> {
 
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: SfCartesianChart(
-        legend: const Legend(
-            isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
-        tooltipBehavior: _tooltipBehavior,
-        zoomPanBehavior: _zoomPanBehavior,
-        plotAreaBorderWidth: 0,
-        primaryXAxis: DateTimeAxis(
-          intervalType: DateTimeIntervalType.auto,
-          dateFormat: DateFormat.Hms(),
-          majorGridLines: const MajorGridLines(width: 0.5),
-        ),
-        primaryYAxis: NumericAxis(
-          majorGridLines: const MajorGridLines(width: 0.5),
-          axisLine: const AxisLine(width: 0),
-        ),
-        series: series,
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              itemCount: _groups.length + 1,
+              separatorBuilder: (_, __) => const SizedBox(height: 16),
+              itemBuilder: (context, index) {
+                if (index < _groups.length) {
+                  final group = _groups[index];
+                  return _buildChartPanel(
+                    context: context,
+                    cs: cs,
+                    group: group,
+                    index: index,
+                    store: store,
+                    prefs: prefs,
+                  );
+                }
+
+                return _buildCreateZone(context, cs);
+              },
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: DragTarget<VariablePath>(
+              onWillAcceptWithDetails: (details) => true,
+              onAcceptWithDetails: (details) =>
+                  setState(() => _moveVariableToNewChart(details.data)),
+              builder: (context, candidate, rejected) {
+                final active = candidate.isNotEmpty;
+                return OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: active ? cs.primary : cs.outlineVariant,
+                      width: active ? 2 : 1,
+                    ),
+                    backgroundColor:
+                        active ? cs.primary.withOpacity(0.08) : null,
+                  ),
+                  onPressed: () => setState(() => _addChart()),
+                  icon: const Icon(Icons.add),
+                  label: const Text('新增图表'),
+                );
+              },
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildChartPanel({
+    required BuildContext context,
+    required ColorScheme cs,
+    required _ChartGroup group,
+    required int index,
+    required Map<VariablePath, RingSeries> store,
+    required AppPrefsState prefs,
+  }) {
+    final series = _seriesForVariables(group.variables, store, prefs);
+
+    return DragTarget<VariablePath>(
+      onWillAcceptWithDetails: (details) => true,
+      onAcceptWithDetails: (details) =>
+          setState(() => _assignVariableToGroup(details.data, index)),
+      builder: (context, candidate, rejected) {
+        final highlight = candidate.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: highlight ? cs.primary : Colors.transparent,
+              width: highlight ? 2 : 0,
+            ),
+          ),
+          child: Card(
+            elevation: highlight ? 2 : 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text('图表 ${index + 1}',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(width: 8),
+                      if (group.variables.isNotEmpty)
+                        Text('(${group.variables.length} 条曲线)',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: cs.onSurfaceVariant)),
+                      const Spacer(),
+                      if (group.variables.isEmpty && _groups.length > 1)
+                        Tooltip(
+                          message: '删除空图表',
+                          child: IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () =>
+                                setState(() => _removeChart(index)),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _buildVariableChips(context, group),
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 260,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: cs.outlineVariant),
+                    ),
+                    child: _buildChartBody(
+                      context: context,
+                      cs: cs,
+                      series: series,
+                      hasData: series.isNotEmpty,
+                      chartId: group.id,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCreateZone(BuildContext context, ColorScheme cs) {
+    return DragTarget<VariablePath>(
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) =>
+          setState(() => _moveVariableToNewChart(details.data)),
+      builder: (context, candidate, rejected) {
+        final active = candidate.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: 120,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: active ? cs.primary : cs.outlineVariant.withOpacity(0.4),
+              width: active ? 2 : 1,
+            ),
+            color: active ? cs.primary.withOpacity(0.08) : Colors.transparent,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            active ? '松开以创建新图表' : '拖动信号到空白处可自动建图',
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: cs.onSurfaceVariant),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVariableChips(BuildContext context, _ChartGroup group) {
+    if (group.variables.isEmpty) {
+      return Text(
+        '拖动选中的信号到下方图表区域进行显示',
+        style: Theme.of(context)
+            .textTheme
+            .bodyMedium
+            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final vp in group.variables)
+          LongPressDraggable<VariablePath>(
+            data: vp,
+            feedback: Material(
+              color: Colors.transparent,
+              child: Chip(
+                label: Text(vp.id),
+                backgroundColor:
+                    Theme.of(context).colorScheme.primary.withOpacity(0.12),
+              ),
+            ),
+            child: InputChip(
+              label: Text(vp.id),
+              tooltip: vp.id,
+              onDeleted: () => _toggleSelection(vp, false),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildChartBody({
+    required BuildContext context,
+    required ColorScheme cs,
+    required List<CartesianSeries<_ChartPoint, DateTime>> series,
+    required bool hasData,
+    required String chartId,
+  }) {
+    if (!hasData) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add_chart,
+                size: 40, color: cs.onSurfaceVariant.withOpacity(0.5)),
+            const SizedBox(height: 8),
+            Text(
+              '拖动信号到此区域',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: cs.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SfCartesianChart(
+      key: ValueKey(chartId),
+      legend: const Legend(
+        isVisible: true,
+        overflowMode: LegendItemOverflowMode.wrap,
+      ),
+      tooltipBehavior: TooltipBehavior(
+        enable: true,
+        activationMode: ActivationMode.singleTap,
+        header: '',
+        decimalPlaces: 3,
+      ),
+      zoomPanBehavior: ZoomPanBehavior(
+        enablePinching: true,
+        enablePanning: true,
+        zoomMode: ZoomMode.x,
+      ),
+      plotAreaBorderWidth: 0,
+      primaryXAxis: DateTimeAxis(
+        intervalType: DateTimeIntervalType.auto,
+        dateFormat: DateFormat.Hms(),
+        majorGridLines: const MajorGridLines(width: 0.5),
+      ),
+      primaryYAxis: const NumericAxis(
+        majorGridLines: MajorGridLines(width: 0.5),
+        axisLine: AxisLine(width: 0),
+      ),
+      series: series,
     );
   }
 
@@ -163,23 +443,66 @@ class _DataPageState extends ConsumerState<DataPage> {
     ref.read(selectedVarsProvider.notifier).state = current;
   }
 
+  void _togglePaused(bool paused) {
+    ref.read(pausedProvider.notifier).state = !paused;
+  }
+
   void _clearSelection() {
     ref.read(selectedVarsProvider.notifier).state = <VariablePath>{};
   }
 
-  List<CartesianSeries<_ChartPoint, DateTime>> _buildSeries({
-    required List<VariablePath> selected,
-    required Map<VariablePath, RingSeries> store,
-    required AppPrefsState prefs,
-  }) {
+  void _addChart() {
+    _groups.add(_ChartGroup(id: _nextGroupId()));
+  }
+
+  void _removeChart(int index) {
+    if (_groups.length <= 1) return;
+    if (index < 0 || index >= _groups.length) return;
+    _groups.removeAt(index);
+  }
+
+  void _assignVariableToGroup(VariablePath vp, int targetIndex) {
+    if (_groups.isEmpty) {
+      _groups.add(_ChartGroup(id: _nextGroupId()));
+    }
+
+    for (final group in _groups) {
+      group.variables.remove(vp);
+    }
+
+    final int clampedIndex;
+    if (targetIndex < 0) {
+      clampedIndex = 0;
+    } else if (targetIndex >= _groups.length) {
+      clampedIndex = _groups.length - 1;
+    } else {
+      clampedIndex = targetIndex;
+    }
+    final group = _groups[clampedIndex];
+    if (!group.variables.contains(vp)) {
+      group.variables.add(vp);
+    }
+  }
+
+  void _moveVariableToNewChart(VariablePath vp) {
+    for (final group in _groups) {
+      group.variables.remove(vp);
+    }
+    _groups.add(_ChartGroup(id: _nextGroupId(), variables: [vp]));
+  }
+
+  List<CartesianSeries<_ChartPoint, DateTime>> _seriesForVariables(
+    List<VariablePath> variables,
+    Map<VariablePath, RingSeries> store,
+    AppPrefsState prefs,
+  ) {
     final renderer = prefs.renderer;
     final lineWidth = prefs.lineWidth;
     final result = <CartesianSeries<_ChartPoint, DateTime>>[];
 
-    for (final vp in selected) {
+    for (final vp in variables) {
       final ring = store[vp];
       if (ring == null || ring.isEmpty) continue;
-
       final data = [
         for (final pt in ring.points)
           _ChartPoint(
@@ -187,7 +510,6 @@ class _DataPageState extends ConsumerState<DataPage> {
             pt.y,
           ),
       ];
-
       if (data.isEmpty) continue;
       result.add(_seriesFor(renderer, data, vp.id, lineWidth));
     }
@@ -232,6 +554,8 @@ class _Sidebar extends StatelessWidget {
     required this.selected,
     required this.onToggle,
     required this.onClear,
+    required this.paused,
+    required this.onTogglePaused,
   });
 
   final TelemetryListenerState listener;
@@ -240,11 +564,18 @@ class _Sidebar extends StatelessWidget {
   final Set<VariablePath> selected;
   final void Function(VariablePath vp, bool enabled) onToggle;
   final VoidCallback onClear;
+  final bool paused;
+  final VoidCallback onTogglePaused;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final statusColor = listener.listening ? cs.primary : cs.error;
+    final bool active = listener.listening && !paused;
+    final statusColor = paused
+        ? cs.tertiary
+        : active
+            ? cs.primary
+            : cs.error;
     final packetText = listener.packetCount.toString();
     final lastPacket = listener.lastPacketAt != null
         ? DateFormat.Hms().format(listener.lastPacketAt!.toLocal())
@@ -272,20 +603,32 @@ class _Sidebar extends StatelessWidget {
                       Row(
                         children: [
                           Icon(
-                            listener.listening
-                                ? Icons.wifi_tethering
-                                : Icons.portable_wifi_off,
+                            paused
+                                ? Icons.pause_circle
+                                : active
+                                    ? Icons.wifi_tethering
+                                    : Icons.portable_wifi_off,
                             color: statusColor,
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            listener.listening ? '运行中' : '未开启',
+                            paused
+                                ? '已暂停'
+                                : active
+                                    ? '运行中'
+                                    : '未开启',
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyLarge
                                 ?.copyWith(
                                     color: statusColor,
                                     fontWeight: FontWeight.w600),
+                          ),
+                          const Spacer(),
+                          FilledButton.tonalIcon(
+                            onPressed: onTogglePaused,
+                            icon: Icon(paused ? Icons.play_arrow : Icons.pause),
+                            label: Text(paused ? '启动' : '暂停'),
                           ),
                         ],
                       ),
@@ -407,4 +750,12 @@ class _ChartPoint {
   const _ChartPoint(this.time, this.value);
   final DateTime time;
   final double value;
+}
+
+class _ChartGroup {
+  _ChartGroup({required this.id, List<VariablePath>? variables})
+      : variables = variables != null ? List.of(variables) : <VariablePath>[];
+
+  final String id;
+  final List<VariablePath> variables;
 }

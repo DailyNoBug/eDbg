@@ -1,14 +1,61 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/services.dart';
-import '../state/theme_state.dart';
-import '../state/prefs_state.dart';
+import 'dart:async';
 
-class SettingPage extends ConsumerWidget {
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../state/app_state.dart';
+import '../state/prefs_state.dart';
+import '../state/telemetry_listener.dart';
+import '../state/theme_state.dart';
+
+class SettingPage extends ConsumerStatefulWidget {
   const SettingPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingPage> createState() => _SettingPageState();
+}
+
+class _SettingPageState extends ConsumerState<SettingPage> {
+  late final TextEditingController _portController;
+  late final FocusNode _portFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    final initialPort = ref.read(prefsProvider).ingestPort;
+    _portController = TextEditingController(text: initialPort.toString());
+    _portFocus = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _portController.dispose();
+    _portFocus.dispose();
+    super.dispose();
+  }
+
+  void _applyPort(BuildContext context) {
+    final raw = _portController.text.trim();
+    final parsed = int.tryParse(raw);
+    if (parsed == null || parsed <= 0 || parsed > 65535) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('端口无效，请输入 1-65535')),
+      );
+      return;
+    }
+    ref.read(prefsProvider.notifier).setIngestPort(parsed);
+    ref.read(configProvider.notifier).state =
+        ref.read(configProvider).copyWith(port: parsed);
+    unawaited(ref.read(telemetryListenerProvider.notifier).applyPort(parsed));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已应用监听端口 $parsed')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
     final themeState = ref.watch(appThemeProvider);
@@ -16,6 +63,10 @@ class SettingPage extends ConsumerWidget {
     final accentName = ThemePalette.nameOf(themeState.seed);
 
     final prefs = ref.watch(prefsProvider);
+    if (!_portFocus.hasFocus &&
+        _portController.text != prefs.ingestPort.toString()) {
+      _portController.text = prefs.ingestPort.toString();
+    }
 
     return Scaffold(
       backgroundColor: cs.surfaceContainerLowest,
@@ -114,25 +165,28 @@ class SettingPage extends ConsumerWidget {
                   onChanged: (v) =>
                       ref.read(prefsProvider.notifier).setAutoIngest(v),
                 ),
-                TextFormField(
-                  key: ValueKey('ingestPort-${prefs.ingestPort}'),
-                  initialValue: prefs.ingestPort.toString(),
-                  decoration: const InputDecoration(
-                    labelText: '监听端口',
-                    helperText: '接收 JSON 数据流，默认 54431',
-                  ),
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  onFieldSubmitted: (value) {
-                    final parsed = int.tryParse(value);
-                    if (parsed == null || parsed <= 0 || parsed > 65535) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('端口无效，请输入 1-65535')),
-                      );
-                      return;
-                    }
-                    ref.read(prefsProvider.notifier).setIngestPort(parsed);
-                  },
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _portController,
+                        focusNode: _portFocus,
+                        decoration: const InputDecoration(
+                          labelText: '监听端口',
+                          helperText: '接收 JSON 数据流，默认 54431',
+                        ),
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: () => _applyPort(context),
+                      child: const Text('应用'),
+                    ),
+                  ],
                 ),
                 ListTile(
                   title: const Text('清理缓存/临时数据'),

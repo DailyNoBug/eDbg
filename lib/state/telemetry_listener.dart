@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -62,7 +61,7 @@ class TelemetryListener extends StateNotifier<TelemetryListenerState> {
     );
     _pausedSub = _ref.listen<bool>(
       pausedProvider,
-      (prev, next) => _paused = next,
+      (prev, next) => _handlePauseChange(next),
       fireImmediately: true,
     );
   }
@@ -83,12 +82,16 @@ class TelemetryListener extends StateNotifier<TelemetryListenerState> {
   bool _errorDirty = false;
   String? _nextError;
 
-  Future<void> _bind(int port) async {
-    if (_boundPort == port && _socket != null) {
+  Future<void> _bind(int port, {bool force = false}) async {
+    if (!force && _boundPort == port && _socket != null) {
       return;
     }
     await _closeSocket();
     state = state.copyWith(port: port, listening: false, lastError: null);
+
+    if (_paused) {
+      return;
+    }
 
     if (kIsWeb) {
       state = state.copyWith(
@@ -132,6 +135,20 @@ class TelemetryListener extends StateNotifier<TelemetryListenerState> {
         listening: false,
         lastError: '端口 $port 绑定失败: $e',
       );
+    }
+  }
+
+  Future<void> applyPort(int port) async {
+    await _bind(port, force: true);
+  }
+
+  void _handlePauseChange(bool next) {
+    _paused = next;
+    if (next) {
+      unawaited(_closeSocket());
+      state = state.copyWith(listening: false);
+    } else {
+      unawaited(_bind(state.port));
     }
   }
 
