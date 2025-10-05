@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'state/app_state.dart';
 import 'pages/setting.dart';
 import 'state/theme_state.dart';
 import 'state/prefs_state.dart';

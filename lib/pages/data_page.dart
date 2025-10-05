@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -21,6 +22,10 @@ class _DataPageState extends ConsumerState<DataPage> {
   final Set<String> _pausedCharts = <String>{};
   final Map<String, Map<VariablePath, List<_ChartPoint>>> _pausedSnapshots =
       <String, Map<VariablePath, List<_ChartPoint>>>{};
+  final Map<VariablePath, _LiveSeriesCache> _liveCaches =
+      <VariablePath, _LiveSeriesCache>{};
+  static const int _liveWindowSeconds = 12;
+  static const int _maxSamplesPerSeries = _liveWindowSeconds * 50;
 
   @override
   void initState() {
@@ -37,13 +42,14 @@ class _DataPageState extends ConsumerState<DataPage> {
   }
 
   void _applySelection(Set<VariablePath> selection) {
-    final store = ref.read(storeProvider);
+    final store = ref.read(storeProvider).series;
     if (selection.isEmpty) {
       _groups
         ..clear()
         ..add(_ChartGroup(id: _nextGroupId()));
       _pausedCharts.clear();
       _pausedSnapshots.clear();
+      _liveCaches.clear();
       return;
     }
 
@@ -77,6 +83,7 @@ class _DataPageState extends ConsumerState<DataPage> {
     final existingIds = _groups.map((g) => g.id).toSet();
     _pausedCharts.removeWhere((id) => !existingIds.contains(id));
     _pausedSnapshots.removeWhere((id, _) => !existingIds.contains(id));
+    _liveCaches.removeWhere((vp, _) => !selection.contains(vp));
 
     for (final group in _groups) {
       if (_pausedCharts.contains(group.id)) {
@@ -97,7 +104,7 @@ class _DataPageState extends ConsumerState<DataPage> {
     final cs = Theme.of(context).colorScheme;
     final listener = ref.watch(telemetryListenerProvider);
     final registry = ref.watch(registryProvider);
-    final store = ref.watch(storeProvider);
+    final store = ref.watch(storeProvider).series;
     final selected = ref.watch(selectedVarsProvider);
     final prefs = ref.watch(prefsProvider);
     final paused = ref.watch(pausedProvider);
@@ -254,7 +261,7 @@ class _DataPageState extends ConsumerState<DataPage> {
       data = _pausedSnapshots[group.id] ??=
           _collectSeriesData(group.variables, store);
     } else {
-      data = _collectSeriesData(group.variables, store);
+      data = _collectLiveSeriesData(group.variables, store);
       _pausedSnapshots.remove(group.id);
     }
     final series = _seriesFromData(data, prefs);
@@ -465,6 +472,9 @@ class _DataPageState extends ConsumerState<DataPage> {
             intervalType: DateTimeIntervalType.auto,
             dateFormat: DateFormat.Hms(),
             majorGridLines: const MajorGridLines(width: 0.5),
+            autoScrollingMode: AutoScrollingMode.end,
+            autoScrollingDeltaType: DateTimeIntervalType.seconds,
+            autoScrollingDelta: _liveWindowSeconds,
           ),
           primaryYAxis: const NumericAxis(
             majorGridLines: MajorGridLines(width: 0.5),
@@ -556,7 +566,7 @@ class _DataPageState extends ConsumerState<DataPage> {
       group.variables.add(vp);
     }
     if (_pausedCharts.contains(group.id)) {
-      final store = ref.read(storeProvider);
+      final store = ref.read(storeProvider).series;
       _pausedSnapshots[group.id] = _collectSeriesData(group.variables, store);
     }
   }
@@ -588,11 +598,30 @@ class _DataPageState extends ConsumerState<DataPage> {
         if (group == null) {
           return;
         }
-        final store = ref.read(storeProvider);
+        final store = ref.read(storeProvider).series;
         _pausedCharts.add(id);
         _pausedSnapshots[id] = _collectSeriesData(group.variables, store);
       }
     });
+  }
+
+  Map<VariablePath, List<_ChartPoint>> _collectLiveSeriesData(
+    List<VariablePath> variables,
+    Map<VariablePath, RingSeries> store,
+  ) {
+    final result = <VariablePath, List<_ChartPoint>>{};
+    for (final vp in variables) {
+      final ring = store[vp];
+      if (ring == null || ring.isEmpty) {
+        _liveCaches.remove(vp);
+        continue;
+      }
+      final cache = _liveCaches.putIfAbsent(
+          vp, () => _LiveSeriesCache(_maxSamplesPerSeries));
+      cache.sync(ring);
+      result[vp] = cache.view;
+    }
+    return result;
   }
 
   Map<VariablePath, List<_ChartPoint>> _collectSeriesData(
@@ -871,4 +900,87 @@ class _ChartGroup {
 
   final String id;
   final List<VariablePath> variables;
+}
+
+class _LiveSeriesCache {
+  _LiveSeriesCache(this.maxSamples);
+
+  final int maxSamples;
+  final List<_ChartPoint> _buffer = <_ChartPoint>[];
+  int _start = 0;
+  int _lastSample = -1;
+
+  late final List<_ChartPoint> view = _LiveSeriesView(this);
+
+  static const int _trimThresholdMultiplier = 4;
+
+  void sync(RingSeries ring) {
+    final latestTotal = ring.totalWritten;
+    if (ring.isEmpty) {
+      _reset();
+      return;
+    }
+
+    final oldestIndex = latestTotal - ring.length;
+    final expectedLatest = latestTotal - 1;
+
+    if (_lastSample < oldestIndex - 1) {
+      _buffer.clear();
+      ring.forEachPoint((x, y) {
+        _buffer.add(_ChartPoint(
+          DateTime.fromMillisecondsSinceEpoch(x.round()),
+          y,
+        ));
+      });
+      final overflow = _buffer.length - maxSamples;
+      if (overflow > 0) {
+        _start = overflow;
+      }
+    } else {
+      ring.forEachSince(_lastSample, (x, y) {
+        _buffer.add(_ChartPoint(
+          DateTime.fromMillisecondsSinceEpoch(x.round()),
+          y,
+        ));
+      });
+    }
+
+    _lastSample = expectedLatest;
+
+    final liveLength = _buffer.length - _start;
+    final overflow = liveLength - maxSamples;
+    if (overflow > 0) {
+      _start += overflow;
+      final trimThreshold = maxSamples * _trimThresholdMultiplier;
+      if (_start >= trimThreshold) {
+        _buffer.removeRange(0, _start);
+        _start = 0;
+      }
+    }
+  }
+
+  void _reset() {
+    _buffer.clear();
+    _start = 0;
+    _lastSample = -1;
+  }
+}
+
+class _LiveSeriesView extends ListBase<_ChartPoint> {
+  _LiveSeriesView(this.cache);
+
+  final _LiveSeriesCache cache;
+
+  @override
+  int get length => cache._buffer.length - cache._start;
+
+  @override
+  _ChartPoint operator [](int index) => cache._buffer[cache._start + index];
+
+  @override
+  void operator []=(int index, _ChartPoint value) =>
+      throw UnsupportedError('read-only');
+
+  @override
+  set length(int newLength) => throw UnsupportedError('read-only');
 }
